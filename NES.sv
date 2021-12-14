@@ -1557,6 +1557,7 @@ assign mapper_flags[7:0]   = mapper;
 
 reg [3:0] clearclk; //Wait for SDRAM
 reg copybios;
+reg cleardone;
 
 typedef enum bit [3:0] { S_LOADHEADER, S_LOADPRG, S_LOADCHR, S_LOADEXTRA, S_LOADFDS, S_ERROR, S_CLEARRAM, S_COPYBIOS, S_LOADNSFH, S_LOADNSFD, S_COPYPLAY, S_DONE } mystate;
 mystate state;
@@ -1579,6 +1580,7 @@ always @(posedge clk) begin
 		            type_nsf ? 25'b0_0000_0000_0000_0001_0000_0000   // Address for NSF Header (0x80 bytes)
 									: 25'b0_0000_0000_0000_0000_0000_0000;  // Address for FDS : BIOS/PRG
 		copybios <= 0;
+		cleardone <= 0;
 	end else begin
 		case(state)
 		// Read 16 bytes of ines header
@@ -1646,6 +1648,7 @@ always @(posedge clk) begin
 				bytes_left <= 21'h2;
 				state <= S_CLEARRAM;
 				clearclk <= 4'h0;
+				cleardone <= 1;
 			 end else begin
 				done <= 1;
 				busy <= 0;
@@ -1690,7 +1693,7 @@ always @(posedge clk) begin
 					bytes_left <= bytes_left - 1'd1;
 					mem_addr <= mem_addr + 1'd1;
 				end
-			 end else if (type_fds) begin
+			 end else if (!cleardone) begin
 				mem_addr <= 25'b0_0000_0000_0000_0000_0000_0000;
 				bytes_left <= 21'h2000;
 				state <= S_COPYBIOS;
