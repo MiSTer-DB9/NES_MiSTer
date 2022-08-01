@@ -151,10 +151,8 @@ module emu
 	// 1 - D-/TX
 	// 2..6 - USR2..USR6
 	// Set USER_OUT to 1 to read from USER_IN.
-    output  	  USER_OSD,	
-	output  [1:0] USER_MODE,
-	input   [7:0] USER_IN,
-	output  [7:0] USER_OUT,
+	input   [6:0] USER_IN,
+	output  [6:0] USER_OUT,
 
 	input         OSD_STATUS
 );
@@ -163,16 +161,6 @@ assign ADC_BUS  = 'Z;
 
 assign AUDIO_S   = 0;
 assign AUDIO_L   = sample[15:0];
-
-wire         CLK_JOY = CLK_50M;         //Assign clock between 40-50Mhz
-wire   [2:0] JOY_FLAG  = {status[62],status[63],status[61]}; //Assign 3 bits of status (31:29) o (63:61)
-wire         JOY_CLK, JOY_LOAD, JOY_SPLIT, JOY_MDSEL;
-wire   [5:0] JOY_MDIN  = JOY_FLAG[2] ? {USER_IN[6],USER_IN[3],USER_IN[5],USER_IN[7],USER_IN[1],USER_IN[2]} : '1;
-wire         JOY_DATA  = JOY_FLAG[1] ? USER_IN[5] : '1;
-//assign       USER_OUT  = JOY_FLAG[2] ? {3'b111,JOY_SPLIT,3'b111,JOY_MDSEL} : JOY_FLAG[1] ? {6'b111111,JOY_CLK,JOY_LOAD} : '1;
-assign       USER_MODE = JOY_FLAG[2:1] ;
-assign       USER_OSD  = joydb_1[10] & joydb_1[6];
-
 assign AUDIO_R   = AUDIO_L;
 assign AUDIO_MIX = 0;
 
@@ -212,7 +200,7 @@ video_freak video_freak
 // 0         1         2         3          4         5         6
 // 01234567890123456789012345678901 23456789012345678901234567890123
 // 0123456789ABCDEFGHIJKLMNOPQRSTUV 0123456789ABCDEFGHIJKLMNOPQRSTUV
-// XXXXXXXX XX     X XXXXXXXXXXXXXX XXXXXXXXXXXXXXXXXXX
+// XXXXXXXX XX     X XXXXXXXX XXXXX XXXXXXXXXXXXXXXXXXXXX
 
 `include "build_id.v"
 parameter CONF_STR = {
@@ -245,27 +233,20 @@ parameter CONF_STR = {
 	"d6P1o36,Crop Offset,0,2,4,8,10,12,-12,-10,-8,-6,-4,-2;",
 	"P1o78,Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
 	"P1-;",
-			"P1O4,Hide Overscan,Off,On;",
-			"P1ORS,Mask Edges,Off,Left,Both,Auto;",
-			"P1OP,Extra Sprites,Off,On;",
-			"P1-;",
-			"P1-;",
-			"P1OUV,Audio Enable,Both,Internal,Cart Expansion,None;",
-			"P2,Input Options;",
-			"P2-;",
-			"d4P2oUV,UserIO Joystick,Off,DB9MD,DB15 ;",
-			"d4P2oT,UserIO Players, 1 Player,2 Players;",
-			"d4P2oS,Buttons Config.,Option 1,Option 2;",
-			"P2-;",
-			"P2O9,Swap Joysticks,No,Yes;",
-			"P2OA,Multitap,Disabled,Enabled;",
-			"D8P2OQ,Serial Mode,None,SNAC;",
-			"H4P2OB,SNAC Mode, 1 Player, 2 Players;",
-			"H4P2OT,SNAC Zapper,Off,On;",
-			"P2o02,Periphery,None,Zapper(Mouse),Zapper(Joy1),Zapper(Joy2),Vaus,Vaus(A-Trigger),Powerpad,Family Trainer;",
-			"P2-;",
-			"P2OL,Zapper Trigger,Mouse,Joystick;",
-			"P2OM,Crosshairs,On,Off;",
+	"P1O4,Hide Overscan,Off,On;",
+	"P1ORS,Mask Edges,Off,Left,Both,Auto;",
+	"P1OP,Extra Sprites,Off,On;",
+	"P1-;",
+	"P1OUV,Audio Enable,Both,Internal,Cart Expansion,None;",
+	"P2,Input Options;",
+	"P2-;",
+	"P2O9,Swap Joysticks,No,Yes;",
+	"P2OA,Multitap,Disabled,Enabled;",
+	"P2oJK,SNAC,Off,Controllers,Zapper,3D Glasses;",
+	"P2o02,Periphery,None,Zapper(Mouse),Zapper(Joy1),Zapper(Joy2),Vaus,Vaus(A-Trigger),Powerpad,Family Trainer;",
+	"P2-;",
+	"P2OL,Zapper Trigger,Mouse,Joystick;",
+	"P2OM,Crosshairs,On,Off;",
 	"P3,Miscellaneous;",
 	"P3-;",
 	"P3OG,Disk Swap,Auto,FDS button;",
@@ -296,8 +277,8 @@ parameter CONF_STR = {
 	"V,v",`BUILD_DATE
 };
 
-wire [22:0] joyA_USB,joyB_USB,joyC_USB,joyD_USB;
-wire [23:0] joyA;
+wire [23:0] joyA,joyB,joyC,joyD;
+wire [23:0] joyA_unmod;
 wire [10:0] ps2_key;
 wire [1:0] buttons;
 
@@ -308,7 +289,7 @@ wire pal_video = |status[24:23];
 wire hide_overscan = status[4] && ~pal_video;
 wire [3:0] palette2_osd = status[49:47];
 wire joy_swap = status[9] ^ (raw_serial || piano); // Controller on port 2 for Miracle Piano/SNAC
-wire fds_swap_invert = status[16];
+wire fds_auto_eject = ~status[16];
 wire ext_audio = ~status[30];
 wire int_audio = ~status[31];
 
@@ -394,64 +375,6 @@ wire        forced_scandoubler;
 
 wire [21:0] gamma_bus;
 
-
-wire [31:0] joyA_unmod = joydb_1ena ?
-	!status[60] ? {
-		//SM BC UDLR
-		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[5],joydb_1[6],joydb_1[3:0]}
-		} :
-		{ 
-		//SM CB UDLR
-		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[6],joydb_1[5],joydb_1[3:0]}
-	}
-: joyA_USB;
-
-wire [31:0] joyB = joydb_2ena ?
-	!status[60] ? {
-		//SM BC UDLR
-		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[5],joydb_2[6],joydb_2[3:0]}
-		} :
-		{ 
-		//SM CB UDLR
-		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[6],joydb_2[5],joydb_2[3:0]}
-}
-: joydb_1ena ? joyA_USB : joyB_USB;
-
-wire [31:0] joyC = joydb_2ena ? joyA_USB : joydb_1ena ? joyB_USB : joyC_USB;
-wire [31:0] joyD = joydb_2ena ? joyB_USB : joydb_1ena ? joyC_USB : joyD_USB;
-
-wire [15:0] joydb_1 = JOY_FLAG[2] ? JOYDB9MD_1 : JOY_FLAG[1] ? JOYDB15_1 : '0;
-wire [15:0] joydb_2 = JOY_FLAG[2] ? JOYDB9MD_2 : JOY_FLAG[1] ? JOYDB15_2 : '0;
-wire        joydb_1ena = |JOY_FLAG[2:1]              ;
-wire        joydb_2ena = |JOY_FLAG[2:1] & JOY_FLAG[0];
-
-//----BA 9876543210
-//----MS ZYXCBAUDLR
-reg [15:0] JOYDB9MD_1,JOYDB9MD_2;
-joy_db9md joy_db9md
-(
-  .clk       ( CLK_JOY    ), //40-50MHz
-  .joy_split ( JOY_SPLIT  ),
-  .joy_mdsel ( JOY_MDSEL  ),
-  .joy_in    ( JOY_MDIN   ),
-  .joystick1 ( JOYDB9MD_1 ),
-  .joystick2 ( JOYDB9MD_2 )	  
-);
-
-//----BA 9876543210
-//----LS FEDCBAUDLR
-reg [15:0] JOYDB15_1,JOYDB15_2;
-joy_db15 joy_db15
-(
-  .clk       ( CLK_JOY   ), //48MHz
-  .JOY_CLK   ( JOY_CLK   ),
-  .JOY_DATA  ( JOY_DATA  ),
-  .JOY_LOAD  ( JOY_LOAD  ),
-  .joystick1 ( JOYDB15_1 ),
-  .joystick2 ( JOYDB15_2 )	  
-);
-
-
 hps_io #(.CONF_STR(CONF_STR)) hps_io
 (
 	.clk_sys(clk),
@@ -460,20 +383,19 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.buttons(buttons),
 	.forced_scandoubler(forced_scandoubler),
 
-	.joystick_0(joyA_USB),
-	.joystick_1(joyB_USB),
-	.joystick_2(joyC_USB),
-	.joystick_3(joyD_USB),
+	.joystick_0(joyA_unmod),
+	.joystick_1(joyB),
+	.joystick_2(joyC),
+	.joystick_3(joyD),
 	.joystick_l_analog_0(joy_analog0),
 	.joystick_l_analog_1(joy_analog1),
 	.paddle_0(pdl[0]),
 	.paddle_1(pdl[1]),
 	.paddle_2(pdl[2]),
 	.paddle_3(pdl[3]),
-	.joy_raw(OSD_STATUS? (joydb_1[5:0]|joydb_2[5:0]) : 6'b000000 ),
-	
+
 	.status(status),
-	.status_menumask({raw_db9,(rom_loaded && mapper_has_savestate), en216p, ~status[50], ~raw_serial, (palette2_osd != 3'd5), ~gg_avail, bios_loaded, ~bk_ena}),
+	.status_menumask({(rom_loaded && mapper_has_savestate), en216p, ~status[50], ~raw_serial, (palette2_osd != 3'd5), ~gg_avail, bios_loaded, ~bk_ena}),
 	.status_in({status[63:47],ss_slot,status[44:0]}),
 	.status_set(statusUpdate),
 	.info_req(info_req),
@@ -499,7 +421,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 	.img_mounted(img_mounted),
 	.img_readonly(img_readonly),
 	.img_size(img_size),
-	 
+
 	.ps2_key(ps2_key),
 
 	.ps2_kbd_led_use(0),
@@ -623,87 +545,71 @@ wire [7:0] nes_joy_D = { joyD[0], joyD[1], joyD[2], joyD[3], joyD[7], joyD[6], j
 wire mic_button = joyA[9] | joyB[9];
 wire fds_btn = joyA[8] | joyB[8];
 
-reg [22:0] clkcount;
-always@(posedge clk) begin
-	if (nes_ce == 3) begin
-		clkcount<=clkcount+1'd1;
+reg [1:0] nes_ce;
+
+wire raw_serial = |status[52:51];
+
+// Extend SNAC zapper high signal to be closer to original NES
+wire extend_serial_d4 = status[52:51] == 2'b10;
+wire snac_3d_glasses = &status[52:51];
+
+wire serial_d4 = extend_serial_d4 ? |serial_d4_sr : ~USER_IN[4];
+reg [7:0] serial_d4_sr;
+reg snac_p2 = 0;
+
+always @(posedge clk) begin
+	reg [17:0] clk_cnt;
+
+	if (raw_serial) begin
+		if (~USER_IN[6])
+			snac_p2 <= 1;
+	end else begin
+		snac_p2 <= 0;
+	end
+
+	clk_cnt <= clk_cnt + 1'b1;
+	serial_d4_sr[0] <= ~USER_IN[4];
+
+	// Shift every 10ms
+	if (clk_cnt == 18'd214772) begin
+		serial_d4_sr <= serial_d4_sr << 1;
+		clk_cnt <= 0;
 	end
 end
 
-wire fds_eject = swap_delay[2] | fds_swap_invert ? fds_btn : (clkcount[22] | fds_btn);
-
-reg [1:0] nes_ce;
-
-wire raw_serial  = status[26];
-wire raw_serial2 = status[11];
-wire raw_db9    = |status[63:62];
-
-// Extend SNAC zapper high signal to be closer to original NES
-wire extend_serial_d4 = status[29];
-wire serial_d4 = extend_serial_d4 ? |serial_d4_sr : ~USER_IN[4];
-reg [7:0] serial_d4_sr;
-always @(posedge clk) begin
-    reg [17:0] clk_cnt;
-
-    clk_cnt <= clk_cnt + 1'b1;
-    serial_d4_sr[0] <= ~USER_IN[4];
-
-    // Shift every 10ms
-    if (clk_cnt == 18'd214772) begin
-        serial_d4_sr <= serial_d4_sr << 1;
-        clk_cnt <= 0;
-    end
-end
-
 // Indexes:
-// 0 = D+
-// 1 = D-
-// 2 = TX-
-// 3 = GND_d
-// 4 = RX+
-// 5 = RX-
+// IDXDIR   Function    USBPIN
+// 0  OUT   Strobe      D+
+// 1  OUT   Clk (P2)    D-
+// 2  BI    Glasses/D3  TX-
+// 3  OUT   CLK (P2)    GND_d
+// 4  IN    D4          RX+
+// 5  IN    P1D0        RX-
+// 6  IN    P2D0        TX+
 
-assign USER_OUT[2] = 1'b1;
-assign USER_OUT[3] = 1'b1;
+assign USER_OUT[4] = 1'b1;
 assign USER_OUT[5] = 1'b1;
-assign USER_OUT[7] = 1'b1;
+assign USER_OUT[6] = 1'b1;
 
 reg [4:0] joypad1_data, joypad2_data;
 
+wire joy0_d0 = snac_p2 ? ~USER_IN[6] : joypad_bits[0];
+wire joy1_d0 = snac_p2 ? ~USER_IN[6] : joypad_bits2[0];
+
 always_comb begin
-	if (raw_serial & !raw_serial2) begin
+	if (raw_serial) begin
 		USER_OUT[0]  = joypad_out[0];
 		USER_OUT[1]  = ~joy_swap ? ~joypad_clock[1] : ~joypad_clock[0];
-		USER_OUT[6] = 1'b1; 		
-		USER_OUT[4] = 1'b1;
-		joypad1_data = {2'b0, mic, 1'b0, ~joy_swap ? joypad_bits[0] : ~USER_IN[5]};
-		joypad2_data = {serial_d4, ~USER_IN[2], 2'b00, ~joy_swap ? ~USER_IN[5] : joypad_bits2[0]};
-	end else if (raw_serial & raw_serial2) begin
-		USER_OUT[0] = joypad_out[0];
-		USER_OUT[1] = ~joy_swap ? ~joypad_clock[1] : ~joypad_clock[0];
-		USER_OUT[6] = ~joy_swap ? ~joypad_clock[0] : ~joypad_clock[1];
-		USER_OUT[4] = 1'b1;
-		joypad1_data = {2'b0, mic, 1'b0, ~joy_swap ? ~USER_IN[3] : ~USER_IN[5]};
-		joypad2_data = {serial_d4, ~USER_IN[2], 2'b00, ~joy_swap ? ~USER_IN[5] : ~USER_IN[3]};
-	end else if (JOY_FLAG[1]) begin
-		USER_OUT[0] = JOY_LOAD;
-		USER_OUT[1] = JOY_CLK;
-		USER_OUT[6] = 1'b1;
-		USER_OUT[4] = 1'b1;
-		joypad1_data = {2'b0, mic, paddle_en & paddle_btn, joypad_bits[0]};
-		joypad2_data = joypad_bits2[0];
-	end else if (JOY_FLAG[2]) begin
-		USER_OUT[0] = JOY_MDSEL;
-		USER_OUT[1] = 1'b1;
-		USER_OUT[6] = 1'b1;
-		USER_OUT[4] = JOY_SPLIT;
-		joypad1_data = {2'b0, mic, paddle_en & paddle_btn, joypad_bits[0]};
-		joypad2_data = joypad_bits2[0];
+		USER_OUT[2]  = snac_3d_glasses ? joypad_out[1] : 1'b1;
+		USER_OUT[3]  = ~joy_swap ? ~joypad_clock[0] : ~joypad_clock[1];
+		joypad1_data = {2'b0, mic, 1'b0, ~joy_swap ? joy0_d0 : ~USER_IN[5]};
+		joypad2_data = {serial_d4, snac_3d_glasses ? 1'b1 : ~USER_IN[2], 2'b00, ~joy_swap ? ~USER_IN[5] : joy1_d0};
 	end else begin
 		USER_OUT[0]  = 1'b1;
 		USER_OUT[1]  = 1'b1;
-		USER_OUT[6]  = 1'b1;
-		USER_OUT[4] = 1'b1;
+		USER_OUT[2]  = 1'b1;
+		USER_OUT[3]  = 1'b1;
+
 		joypad1_data = {2'b0, mic, paddle_en & paddle_btn, joypad_bits[0]};
 		joypad2_data = joypad_bits2[0];
 
@@ -781,7 +687,7 @@ always @(posedge clk) begin
 	end else begin
 		if (joypad_out[0]) begin
 			joypad_bits  <= piano ? {15'h0000, uart_data[8:0]}
-			               : {status[10] ? {8'h08, nes_joy_C} : 16'hFFFF, joy_swap ? nes_joy_B : nes_joy_A};
+				: {status[10] ? {8'h08, nes_joy_C} : 16'hFFFF, joy_swap ? nes_joy_B : nes_joy_A};
 			joypad_bits2 <= {status[10] ? {8'h04, nes_joy_D} : 16'hFFFF, joy_swap ? nes_joy_A : nes_joy_B};
 			joypad_d4 <= paddle_en ? paddle_nes : {4'b1111, powerpad[7], powerpad[11], powerpad[2], powerpad[3]};
 			joypad_d3 <= {powerpad[6], powerpad[10], powerpad[9], powerpad[5], powerpad[8], powerpad[4], powerpad[0], powerpad[1]};
@@ -870,12 +776,11 @@ wire bram_en;
 wire trigger;
 wire light;
 
-wire [1:0] diskside_req;
-reg [1:0] diskside;
+wire [1:0] diskside;
 reg       diskside_info;
 always @(posedge clk) begin
 	reg [1:0] old_diskside;
-	
+
 	old_diskside <= diskside;
 	diskside_info <= (old_diskside != diskside);
 end
@@ -893,12 +798,12 @@ assign HDMI_FREEZE = corepaused;
 
 always_ff @(posedge clk) begin
 	pausecore <= sleep_savestate | (status[41] && OSD_STATUS && !ioctl_download && !reset_nes);
-	
+
 	if (!corepaused) begin
 		videopause_ce <= nes_ce + 1'd1;
 	end else begin
 		videopause_ce <= videopause_ce + 1'd1;
-	end 
+	end
 end
 
 NES nes (
@@ -932,10 +837,12 @@ NES nes (
 	.joypad_clock    (joypad_clock),
 	.joypad1_data    (joypad1_data),
 	.joypad2_data    (joypad2_data),
-	.diskside_req    (diskside_req),
+
 	.diskside        (diskside),
 	.fds_busy        (fds_busy),
-	.fds_eject       (fds_eject),
+	.fds_eject       (fds_btn),
+	.fds_auto_eject  (fds_auto_eject),
+	.max_diskside    (max_diskside),
 
 	// Memory transactions
 	.cpumem_addr     (cpu_addr ),
@@ -959,7 +866,7 @@ NES nes (
 	.bram_write      (bram_write),
 	.bram_override   (bram_en),
 	.save_written    (save_written),
-	
+
 	// savestates
 	.mapper_has_savestate    (mapper_has_savestate),
 	.increaseSSHeaderCount   (!status[44]),
@@ -967,26 +874,26 @@ NES nes (
 	.load_state              (ss_load),
 	.savestate_number        (ss_slot),
 	.sleep_savestate         (sleep_savestate),
-	
-	.Savestate_SDRAMAddr     (Savestate_SDRAMAddr     ),    
-	.Savestate_SDRAMRdEn     (Savestate_SDRAMRdEn     ),    
-	.Savestate_SDRAMWrEn     (Savestate_SDRAMWrEn     ),    
+
+	.Savestate_SDRAMAddr     (Savestate_SDRAMAddr     ),
+	.Savestate_SDRAMRdEn     (Savestate_SDRAMRdEn     ),
+	.Savestate_SDRAMWrEn     (Savestate_SDRAMWrEn     ),
 	.Savestate_SDRAMWriteData(Savestate_SDRAMWriteData),
 	.Savestate_SDRAMReadData (Savestate_SDRAMReadData ),
-	
+
 	.SaveStateExt_Din        (SaveStateBus_Din),
-	.SaveStateExt_Adr        (SaveStateBus_Adr), 
+	.SaveStateExt_Adr        (SaveStateBus_Adr),
 	.SaveStateExt_wren       (SaveStateBus_wren),
 	.SaveStateExt_rst        (SaveStateBus_rst),
 	.SaveStateExt_Dout       (SaveStateBus_Dout),
 	.SaveStateExt_load       (savestate_load),
-	
+
 	.SAVE_out_Din            (ss_din),           // data read from savestate
 	.SAVE_out_Dout           (ss_dout),          // data written to savestate
 	.SAVE_out_Adr            (ss_addr),          // all addresses are DWORD addresses!
 	.SAVE_out_rnw            (ss_rnw),           // read = 1, write = 0
 	.SAVE_out_ena            (ss_req),           // one cycle high for each action
-	.SAVE_out_be             (ss_be),           
+	.SAVE_out_be             (ss_be),
 	.SAVE_out_done           (ss_ack)            // should be one cycle high when write is done or read value is valid
 );
 
@@ -1011,17 +918,13 @@ always @(posedge clk) begin
 	end
 end
 
-dpram #("rtl/fdspatch.mif", 13) biospatch
+spram #(.addr_width(13)) fds_bios
 (
-	.clock_a(clk),
-	.address_a(ioctl_addr[12:0]),
-	.wren_a(bios_write),
-	.data_a(bios_data ^ loader_write_data),
-	.q_a(),
-
-	.clock_b(clk),
-	.address_b(loader_addr[12:0]),
-	.q_b(bios_data)
+	.clock(clk),
+	.address(loader_addr[12:0]),
+	.wren(bios_write),
+	.data(loader_write_data),
+	.q(bios_data)
 );
 
 wire [7:0] nsf_data;
@@ -1060,9 +963,9 @@ end
 wire [24:0] ch2_addr = sleep_savestate ? Savestate_SDRAMAddr      : {7'b0001111, save_addr};
 wire        ch2_wr   = sleep_savestate ? Savestate_SDRAMWrEn      : save_wr;
 wire  [7:0] ch2_din  = sleep_savestate ? Savestate_SDRAMWriteData : sd_buff_dout;
-wire        ch2_rd   = sleep_savestate ? Savestate_SDRAMRdEn      : save_rd;   
+wire        ch2_rd   = sleep_savestate ? Savestate_SDRAMRdEn      : save_rd;
 
-assign Savestate_SDRAMReadData = save_dout; 
+assign Savestate_SDRAMReadData = save_dout;
 
 sdram sdram
 (
@@ -1094,14 +997,14 @@ sdram sdram
 	.ch2_rd     ( ch2_rd ),
 	.ch2_dout   ( save_dout ),
 	.ch2_busy   ( save_busy ),
-	
+
 	.refresh    (refresh  ),
 	.ss_in      (sdram_ss_in),
 	.ss_load    (savestate_load),
 	.ss_out     (sdram_ss_out)
 );
 
-wire  [7:0] save_dout;
+wire [7:0] save_dout;
 assign sd_buff_din = bram_en ? eeprom_dout : save_dout;
 
 wire [7:0] eeprom_dout;
@@ -1277,14 +1180,14 @@ end
 
 reg bk_ena = 0;
 reg old_downloading = 0;
-reg [1:0] last_diskside = 2'd3;
+reg [1:0] max_diskside = 2'd3;
 always @(posedge clk) begin
 	old_downloading <= downloading;
 	if(~old_downloading & downloading) bk_ena <= 0;
 
 	//Save file always mounted in the end of downloading state.
 	if(downloading && img_mounted && !img_readonly) bk_ena <= 1;
-	if(~bk_ena && loader_write_triggered) last_diskside <= loader_addr_mem[17:16];
+	if(~bk_ena && loader_write_triggered) max_diskside <= loader_addr_mem[17:16];
 end
 
 wire bk_load    = status[6];
@@ -1294,12 +1197,8 @@ reg  bk_loading_req = 0;
 reg  bk_request = 0;
 wire bk_busy = (bk_state == S_COPY);
 reg  fds_busy;
-reg  old_fds_btn;
-reg [2:0] swap_delay;
-reg [1:0] diskside_btn;
+
 wire [8:0] save_sz = fds ? rom_sz[17:9] : bram_en ? 9'd3 : (prg_nvram == 4'd7) ? 9'd15 : 9'd63;
-wire [1:0] diskside_req_use = fds_swap_invert ? diskside_btn : diskside_req;
-wire [1:0] next_btn_diskside = (last_diskside == diskside_btn) ? 2'd0 : diskside_btn + 2'd1;
 
 typedef enum bit [1:0] { S_IDLE, S_COPY } mystate;
 mystate bk_state = S_IDLE;
@@ -1314,26 +1213,16 @@ always @(posedge clk) begin : save_block
 	old_save <= bk_save & bk_ena;
 	old_ack  <= sd_ack;
 	fds_busy <= (bk_state != S_IDLE) || bk_request;
-	old_fds_btn <= fds_btn;
 
 	if(~old_ack & sd_ack) {sd_rd, sd_wr} <= 0;
-	if (swap_delay == {1'b1, clkcount[22:21]}) begin
-		swap_delay[2] <= 0;
-	end
-	if(~old_fds_btn & fds_btn & ~fds_busy & ~swap_delay[2]) diskside_btn <= next_btn_diskside;
 
 	if (downloading) begin
-		diskside <= 2'd0;
 		bk_state <= S_IDLE;
 		bk_request <= 0;
-		diskside_btn <= 2'd0;
 	end else if(bk_state == S_IDLE) begin
 		if((~old_load & bk_load) | (~old_save & bk_save)) begin
 			bk_loading <= bk_load;
 			bk_request <= 1;
-		end else if((diskside_req_use != diskside) && ~downloading && ~bk_request && fds) begin
-			diskside <= diskside_req_use;
-			swap_delay <= {1'b1, ~clkcount[22:21]};
 		end
 		if(old_downloading & ~downloading & |img_size & bk_ena) begin
 			bk_loading <= 1;
@@ -1367,16 +1256,16 @@ wire [27:2] ss_addr;
 wire  [7:0] ss_be;
 wire        ss_rnw, ss_req, ss_ack;
 
-wire [24:0] Savestate_SDRAMAddr;     
-wire        Savestate_SDRAMRdEn;    
-wire        Savestate_SDRAMWrEn;    
+wire [24:0] Savestate_SDRAMAddr;
+wire        Savestate_SDRAMRdEn;
+wire        Savestate_SDRAMWrEn;
 wire [7:0]  Savestate_SDRAMWriteData;
 wire [7:0]  Savestate_SDRAMReadData;
 
-wire [63:0] SaveStateBus_Din; 
-wire [9:0]  SaveStateBus_Adr; 
+wire [63:0] SaveStateBus_Din;
+wire [9:0]  SaveStateBus_Adr;
 wire        SaveStateBus_wren;
-wire        SaveStateBus_rst; 
+wire        SaveStateBus_rst;
 wire [63:0] SaveStateBus_Dout;
 wire        savestate_load;
 
@@ -1385,9 +1274,9 @@ wire [15:0] sdram_ss_out;
 
 wire [63:0] SS_Ext;
 wire [63:0] SS_Ext_BACK;
-eReg_SavestateV #(SSREG_INDEX_EXT, SSREG_DEFAULT_EXT) iREG_SAVESTATE_Ext (clk, SaveStateBus_Din, SaveStateBus_Adr, SaveStateBus_wren, SaveStateBus_rst, SaveStateBus_Dout, SS_Ext_BACK, SS_Ext);  
+eReg_SavestateV #(SSREG_INDEX_EXT, SSREG_DEFAULT_EXT) iREG_SAVESTATE_Ext (clk, SaveStateBus_Din, SaveStateBus_Adr, SaveStateBus_wren, SaveStateBus_rst, SaveStateBus_Dout, SS_Ext_BACK, SS_Ext);
 
-assign SS_Ext_BACK[15: 0] = sdram_ss_out;  
+assign SS_Ext_BACK[15: 0] = sdram_ss_out;
 assign SS_Ext_BACK[63:16] = 48'b0; // free to be used
 
 assign DDRAM_CLK = clk;
@@ -1478,9 +1367,9 @@ wire has_chr_ram = ~is_nes20 ? (chrrom == 0) : |chrram;
 
 assign mem_data = (state == S_CLEARRAM || (~copybios && state == S_COPYBIOS)) ? 8'h00 : indata;
 assign mem_write = (((bytes_left != 0) && (state == S_LOADPRG || state == S_LOADCHR || state == S_LOADEXTRA)
-                    || (downloading && (state == S_LOADHEADER || state == S_LOADFDS || state == S_LOADNSFH || state == S_LOADNSFD))) && indata_clk)
-						 || ((bytes_left != 0) && ((state == S_CLEARRAM) || (state == S_COPYBIOS) || (state == S_COPYPLAY)) && clearclk == 4'h2);
-  
+	|| (downloading && (state == S_LOADHEADER || state == S_LOADFDS || state == S_LOADNSFH || state == S_LOADNSFD))) && indata_clk)
+	|| ((bytes_left != 0) && ((state == S_CLEARRAM) || (state == S_COPYBIOS) || (state == S_COPYPLAY)) && clearclk == 4'h2);
+
 // detect iNES2.0 compliant header
 wire is_nes20 = (ines[7][3:2] == 2'b10);
 wire is_nes20_prg = (is_nes20 && (ines[9][3:0] == 4'hF));
@@ -1511,20 +1400,20 @@ always @(posedge clk) begin
 end
 
 wire [2:0] prg_size = prgrom <= 1  ? 3'd0 :		// 16KB
-                      prgrom <= 2  ? 3'd1 : 		// 32KB
-                      prgrom <= 4  ? 3'd2 : 		// 64KB
-                      prgrom <= 8  ? 3'd3 : 		// 128KB
-                      prgrom <= 16 ? 3'd4 : 		// 256KB
-                      prgrom <= 32 ? 3'd5 : 		// 512KB
-                      prgrom <= 64 ? 3'd6 : 3'd7;// 1MB/2MB
+	prgrom <= 2  ? 3'd1 : 		// 32KB
+	prgrom <= 4  ? 3'd2 : 		// 64KB
+	prgrom <= 8  ? 3'd3 : 		// 128KB
+	prgrom <= 16 ? 3'd4 : 		// 256KB
+	prgrom <= 32 ? 3'd5 : 		// 512KB
+	prgrom <= 64 ? 3'd6 : 3'd7;// 1MB/2MB
 
 wire [2:0] chr_size = chrrom <= 1  ? 3'd0 : 		// 8KB
-                      chrrom <= 2  ? 3'd1 : 		// 16KB
-                      chrrom <= 4  ? 3'd2 : 		// 32KB
-                      chrrom <= 8  ? 3'd3 : 		// 64KB
-                      chrrom <= 16 ? 3'd4 : 		// 128KB
-                      chrrom <= 32 ? 3'd5 : 		// 256KB
-                      chrrom <= 64 ? 3'd6 : 3'd7;// 512KB/1MB
+	chrrom <= 2  ? 3'd1 : 		// 16KB
+	chrrom <= 4  ? 3'd2 : 		// 32KB
+	chrrom <= 8  ? 3'd3 : 		// 64KB
+	chrrom <= 16 ? 3'd4 : 		// 128KB
+	chrrom <= 32 ? 3'd5 : 		// 256KB
+	chrrom <= 64 ? 3'd6 : 3'd7;// 512KB/1MB
 
 // differentiate dirty iNES1.0 headers from proper iNES2.0 ones
 wire is_dirty = !is_nes20 && ((ines[9][7:1] != 0)
@@ -1578,8 +1467,8 @@ always @(posedge clk) begin
 		done <= 0;
 		ctr <= 0;
 		mem_addr <= type_fds ? 25'b0_0011_1100_0000_0000_0001_0000 :
-		            type_nsf ? 25'b0_0000_0000_0000_0001_0000_0000   // Address for NSF Header (0x80 bytes)
-									: 25'b0_0000_0000_0000_0000_0000_0000;  // Address for FDS : BIOS/PRG
+			type_nsf ? 25'b0_0000_0000_0000_0001_0000_0000   // Address for NSF Header (0x80 bytes)
+			: 25'b0_0000_0000_0000_0000_0000_0000;           // Address for FDS : BIOS/PRG
 		copybios <= 0;
 		cleardone <= 0;
 	end else begin
@@ -1587,85 +1476,85 @@ always @(posedge clk) begin
 		// Read 16 bytes of ines header
 		S_LOADHEADER:
 			if (indata_clk) begin
-			  error <= 0;
-			  ctr <= ctr + 1'd1;
-			  mem_addr <= mem_addr + 1'd1;
-			  ines[ctr] <= indata;
-			  bytes_left <= prg_size2;
-			  if (ctr == 4'b1111) begin
-				 // Check the 'NES' header. Also, we don't support trainers.
-				 busy <= 1;
-				 if ((ines[0] == 8'h4E) && (ines[1] == 8'h45) && (ines[2] == 8'h53) && (ines[3] == 8'h1A) && !ines[6][2]) begin
-					mem_addr <= 0;  // Address for PRG
-					state <= S_LOADPRG;
-				 //FDS
-				 end else if ((ines[0] == 8'h46) && (ines[1] == 8'h44) && (ines[2] == 8'h53) && (ines[3] == 8'h1A)) begin
-					mem_addr <= 25'b0_0011_1100_0000_0000_0001_0000;  // Address for FDS skip Header
-					state <= S_LOADFDS;
-					bytes_left <= 21'b1;
-				 end else if (type_bios) begin // Bios
-					state <= S_LOADFDS;
-					mem_addr <= 25'b0_0000_0000_0000_0000_0001_0000;  // Address for BIOS skip Header
-					bytes_left <= 21'b1;
-				 end else if(type_fds) begin // FDS
-					state <= S_LOADFDS;
-					mem_addr <= 25'b0_0011_1100_0000_0000_0010_0000;  // Address for FDS no Header
-					bytes_left <= 21'b1;
-				 end else if(type_nsf) begin // NFS
-					state <= S_LOADNSFH;
-					//mem_addr <= 22'b00_0000_0000_0001_0001_0000;  // Just keep copying
-					bytes_left <= 21'h70; // Rest of header
-				 end else begin
-					state <= S_ERROR;
-				 end
-			  end
+				error <= 0;
+				ctr <= ctr + 1'd1;
+				mem_addr <= mem_addr + 1'd1;
+				ines[ctr] <= indata;
+				bytes_left <= prg_size2;
+				if (ctr == 4'b1111) begin
+					// Check the 'NES' header. Also, we don't support trainers.
+					busy <= 1;
+					if ((ines[0] == 8'h4E) && (ines[1] == 8'h45) && (ines[2] == 8'h53) && (ines[3] == 8'h1A) && !ines[6][2]) begin
+						mem_addr <= 0;  // Address for PRG
+						state <= S_LOADPRG;
+					//FDS
+					end else if ((ines[0] == 8'h46) && (ines[1] == 8'h44) && (ines[2] == 8'h53) && (ines[3] == 8'h1A)) begin
+						mem_addr <= 25'b0_0011_1100_0000_0000_0001_0000;  // Address for FDS skip Header
+						state <= S_LOADFDS;
+						bytes_left <= 21'b1;
+					end else if (type_bios) begin // Bios
+						state <= S_LOADFDS;
+						mem_addr <= 25'b0_0000_0000_0000_0000_0001_0000;  // Address for BIOS skip Header
+						bytes_left <= 21'b1;
+					end else if(type_fds) begin // FDS
+						state <= S_LOADFDS;
+						mem_addr <= 25'b0_0011_1100_0000_0000_0010_0000;  // Address for FDS no Header
+						bytes_left <= 21'b1;
+					end else if(type_nsf) begin // NFS
+						state <= S_LOADNSFH;
+						//mem_addr <= 22'b00_0000_0000_0001_0001_0000;  // Just keep copying
+						bytes_left <= 21'h70; // Rest of header
+					end else begin
+						state <= S_ERROR;
+					end
+				end
 			end
 		S_LOADPRG, S_LOADCHR: begin // Read the next |bytes_left| bytes into |mem_addr|
-			 // Abort when downloading stops and there are bytes left (invalid header)
-			 if (downloading && bytes_left != 0) begin
+			// Abort when downloading stops and there are bytes left (invalid header)
+			if (downloading && bytes_left != 0) begin
 				if (indata_clk) begin
 				  bytes_left <= bytes_left - 1'd1;
 				  mem_addr <= mem_addr + 1'd1;
 				end
-			 end else if (state == S_LOADPRG) begin
+			end else if (state == S_LOADPRG) begin
 				state <= S_LOADCHR;
 				mem_addr <= 25'b0_0010_0000_0000_0000_0000_0000; // Address for CHR
 				bytes_left <= chr_size2;
-			 end else if (state == S_LOADCHR) begin
+			end else if (state == S_LOADCHR) begin
 				state <= S_LOADEXTRA;
 				mem_addr <= 25'b1_0000_0000_0000_0000_0000_0000; // Address for Extra
 				//Replace with calculation based on file size requires actual file size?
 				bytes_left <= ({ines2mapper[1:0],mapper} == 10'd413) ? 25'b0_1000_0000_0000_0000_0000_0000 : 25'd0;
-			 end
 			end
+		end
 		S_LOADEXTRA: begin
-			 if (downloading &&  bytes_left != 0) begin
+			if (downloading &&  bytes_left != 0) begin
 				if (indata_clk) begin
-				  bytes_left <= bytes_left - 1'd1;
-				  mem_addr <= mem_addr + 1'd1;
+					bytes_left <= bytes_left - 1'd1;
+					mem_addr <= mem_addr + 1'd1;
 				end
-			 end else if (mapper == 8'd232) begin
+			end else if (mapper == 8'd232) begin
 				mem_addr <= 25'b0_0011_1000_0000_0111_1111_1110; // Quattro - Clear these two RAM address to restart game menu
 				bytes_left <= 21'h2;
 				state <= S_CLEARRAM;
 				clearclk <= 4'h0;
 				cleardone <= 1;
-			 end else begin
+			end else begin
 				done <= 1;
 				busy <= 0;
-			 end
 			end
+		end
 		S_ERROR: begin
 				done <= 1;
 				error <= 1;
 				busy <= 0;
-			end
+		end
 		S_LOADFDS: begin // Read the next |bytes_left| bytes into |mem_addr|
 			 if (downloading) begin
 				if (indata_clk) begin
-				  mem_addr <= mem_addr + 1'd1;
+					mem_addr <= mem_addr + 1'd1;
 				end
-			 end else begin
+			end else begin
 //				mem_addr <= 25'b0_0011_1000_0000_0000_0000_0000;
 //				bytes_left <= 21'h800;
 				mem_addr <= 25'b0_0011_1000_0000_0001_0000_0010; // FDS - Clear these two RAM addresses to restart BIOS
@@ -1685,54 +1574,54 @@ always @(posedge clk) begin
 				state <= S_CLEARRAM;
 				clearclk <= 4'h0;
 				copybios <= ~is_bios; // Don't copybios for bootrom0
-			 end
 			end
+		end
 		S_CLEARRAM: begin // Read the next |bytes_left| bytes into |mem_addr|
-			 clearclk <= clearclk + 4'h1;
-			 if (bytes_left != 21'h0) begin
+			clearclk <= clearclk + 4'h1;
+			if (bytes_left != 21'h0) begin
 				if (clearclk == 4'hF) begin
 					bytes_left <= bytes_left - 1'd1;
 					mem_addr <= mem_addr + 1'd1;
 				end
-			 end else if (!cleardone) begin
+			end else if (!cleardone) begin
 				mem_addr <= 25'b0_0000_0000_0000_0000_0000_0000;
 				bytes_left <= 21'h2000;
 				state <= S_COPYBIOS;
 				clearclk <= 4'h0;
-			 end else begin
+			end else begin
 				state <= S_DONE;
-			 end
 			end
+		end
 		S_COPYBIOS: begin // Read the next |bytes_left| bytes into |mem_addr|
-			 clearclk <= clearclk + 4'h1;
-			 if (bytes_left != 21'h0) begin
+			clearclk <= clearclk + 4'h1;
+			if (bytes_left != 21'h0) begin
 				if (clearclk == 4'hF) begin
 					bytes_left <= bytes_left - 1'd1;
 					mem_addr <= mem_addr + 1'd1;
 				end
 			 end else begin
 				state <= S_DONE;
-			 end
 			end
+		end
 		S_LOADNSFH: begin // Read the next |bytes_left| bytes into |mem_addr|
-			 if (bytes_left != 0) begin
+			if (bytes_left != 0) begin
 				if (indata_clk) begin
-				  bytes_left <= bytes_left - 1'd1;
-				  mem_addr <= mem_addr + 1'd1;
+					bytes_left <= bytes_left - 1'd1;
+					mem_addr <= mem_addr + 1'd1;
 				end
-			 end else begin
+			end else begin
 				state <= S_LOADNSFD;
 				//mem_addr <= {25'b0_0001_0000_0000_0000_0000_0000; // Address for NSF Data
 				mem_addr <= {13'b0_0001_0000_0000,ines[9][3:0],ines[8]};//_0000_0000_0000; // Address for NSF Data
 				bytes_left <= 21'b1;
-			 end
 			end
+		end
 		S_LOADNSFD: begin // Read the next |bytes_left| bytes into |mem_addr|
-			 if (downloading) begin
+			if (downloading) begin
 				if (indata_clk) begin
-				  mem_addr <= mem_addr + 1'd1;
+					mem_addr <= mem_addr + 1'd1;
 				end
-			 end else begin
+			end else begin
 				mem_addr <= 25'b0_0000_0000_0000_0001_1000_0000; // Address for NSF Player (0x180)
 				bytes_left <= 21'h0E80;
 				ines[4] <= 8'h80;//no masking
@@ -1749,23 +1638,23 @@ always @(posedge clk) begin
 				ines[15] <= 8'h19;//miracle piano; controllers swapped
 				state <= S_COPYPLAY;
 				clearclk <= 4'h0;
-			 end
 			end
+		end
 		S_COPYPLAY: begin // Read the next |bytes_left| bytes into |mem_addr|
-			 clearclk <= clearclk + 4'h1;
-			 if (bytes_left != 21'h0) begin
+			clearclk <= clearclk + 4'h1;
+			if (bytes_left != 21'h0) begin
 				if (clearclk == 4'hF) begin
 					bytes_left <= bytes_left - 1'd1;
 					mem_addr <= mem_addr + 1'd1;
 				end
-			 end else begin
+			end else begin
 				state <= S_DONE;
-			 end
 			end
+		end
 		S_DONE: begin // Read the next |bytes_left| bytes into |mem_addr|
-			 done <= 1;
-			 busy <= 0;
-			end
+			done <= 1;
+			busy <= 0;
+		end
 		endcase
 	end
 end
