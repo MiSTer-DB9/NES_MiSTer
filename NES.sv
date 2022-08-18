@@ -307,6 +307,9 @@ parameter CONF_STR = {
 	"P1OUV,Audio Enable,Both,Internal,Cart Expansion,None;",
 	"P2,Input Options;",
 	"P2-;",
+	"d4P2oUV,UserIO Joystick,Off,DB9MD,DB15 ;",
+	"d4P2oT,UserIO Players, 1 Player,2 Players;",
+	"d4P2oS,Buttons Config.,Option 1,Option 2;",
 	"P2O9,Swap Joysticks,No,Yes;",
 	"P2OA,Multitap,Disabled,Enabled;",
 	"P2oJK,SNAC,Off,Controllers,Zapper,3D Glasses;",
@@ -631,10 +634,10 @@ always @(posedge clk) begin
 	reg [17:0] clk_cnt;
 
 	if (raw_serial) begin
-		if (~USER_IN[6])
+		if (~USER_IN[3])
 			snac_p2 <= 1;
-	end else begin
-		snac_p2 <= 0;
+		end else begin
+			snac_p2 <= 0;
 	end
 
 	clk_cnt <= clk_cnt + 1'b1;
@@ -662,17 +665,17 @@ assign USER_OUT[7] = 1'b1;
 
 reg [4:0] joypad1_data, joypad2_data;
 
-wire joy0_d0 = snac_p2 ? ~USER_IN[6] : joypad_bits[0];
-wire joy1_d0 = snac_p2 ? ~USER_IN[6] : joypad_bits2[0];
+wire joy0_d0 = snac_p2 ? ~USER_IN[3] : joypad_bits[0];
+wire joy1_d0 = snac_p2 ? ~USER_IN[3] : joypad_bits2[0];
 
 always_comb begin
 	if (raw_serial) begin
 		USER_OUT[0]  = joypad_out[0];
 		USER_OUT[1]  = ~joy_swap ? ~joypad_clock[1] : ~joypad_clock[0];
 		USER_OUT[2]  = snac_3d_glasses ? joypad_out[1] : 1'b1;
-		USER_OUT[3]  = ~joy_swap ? ~joypad_clock[0] : ~joypad_clock[1];
+		USER_OUT[6]  = ~joy_swap ? ~joypad_clock[0] : ~joypad_clock[1];
 		USER_OUT[4]  = 1'b1;
-		USER_OUT[6]  = 1'b1; 		
+		USER_OUT[3]  = 1'b1; 		
 		joypad1_data = {2'b0, mic, 1'b0, ~joy_swap ? joy0_d0 : ~USER_IN[5]};
 		joypad2_data = {serial_d4, snac_3d_glasses ? 1'b1 : ~USER_IN[2], 2'b00, ~joy_swap ? ~USER_IN[5] : joy1_d0};
 	end else if (JOY_FLAG[1]) begin
