@@ -214,22 +214,22 @@ joydb joydb (
 wire [31:0] joyA_unmod = joydb_1ena ?
 	!status[60] ? {
 		//SM BC UDLR
-		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[5],joydb_1[6],joydb_1[3:0]}
+		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11],joydb_1[5],joydb_1[6],joydb_1[3:0]}
 		} :
 		{ 
 		//SM CB UDLR
-		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11]|(joydb_1[10]&joydb_1[5]),joydb_1[6],joydb_1[5],joydb_1[3:0]}
+		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11],joydb_1[6],joydb_1[5],joydb_1[3:0]}
 	}
 : joyA_USB;
 
 wire [31:0] joyB = joydb_2ena ?
 	!status[60] ? {
 		//SM BC UDLR
-		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[5],joydb_2[6],joydb_2[3:0]}
+		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11],joydb_2[5],joydb_2[6],joydb_2[3:0]}
 		} :
 		{ 
 		//SM CB UDLR
-		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11]|(joydb_2[10]&joydb_2[5]),joydb_2[6],joydb_2[5],joydb_2[3:0]}
+		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11],joydb_2[6],joydb_2[5],joydb_2[3:0]}
 }
 : joydb_1ena ? joyA_USB : joyB_USB;
 
