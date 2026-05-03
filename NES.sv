@@ -334,8 +334,10 @@ parameter CONF_STR = {
 	"P1OUV,Audio Enable,Both,Internal,Cart Expansion,None;",
 	"P2,Input Options;",
 	"P2-;",
-	"d4P2oUV,UserIO Joystick,Off,DB9MD,DB15 ;",
-	"d4P2oT,UserIO Players, 1 Player,2 Players;",
+	// [MiSTer-DB9-Pro BEGIN] - Saturn-first UserIO selector + 1P/2P (joy_type at status[127:126], joy_2p at status[125])
+	"d4P2O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;",
+	"d4P2O[125],UserIO Players, 1 Player,2 Players;",
+	// [MiSTer-DB9-Pro END]
 	"d4P2oS,Buttons Config.,Option 1,Option 2;",
 	"P2O9,Swap Joysticks,No,Yes;",
 	"P2OA,Multitap,Disabled,Enabled;",
