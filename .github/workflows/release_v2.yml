@@ -1,16 +1,24 @@
-name: Push Release
+name: Release v2
 
+# [MiSTer-DB9 BEGIN] - stable channel: build fork HEAD, upload to stable-builds.
+# Per-branch concurrency key so multi-variant repos build siblings in parallel.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-v2-${{ github.repository }}-${{ github.ref }}
   cancel-in-progress: true
 
 on:
   push:
     branches:
       - master
-  repository_dispatch:
-    types: [push_release]
   workflow_dispatch:
+    inputs:
+      forced:
+        description: "Bypass source-hash skip + BOT-commit skip"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write   # gh release create / upload / delete-asset
 
 jobs:
   build:
@@ -29,6 +37,8 @@ jobs:
         swap-storage: true
 
     - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
 
     - name: Resolve Quartus image
       id: image
@@ -46,14 +56,14 @@ jobs:
         path: /tmp/docker-image.tar
         key: docker-${{ steps.image.outputs.image }}
 
-    - name: Release
-      run: ./.github/push_release.sh theypsilon@gmail.com neurorulez@gmail.com timothy.redaelli@gmail.com
+    - name: Build stable RBF from fork HEAD
+      run: ./.github/release_v2.sh theypsilon@gmail.com neurorulez@gmail.com timothy.redaelli@gmail.com
       env:
         NOTIFICATION_API_KEY: ${{ secrets.NOTIFICATION_API_KEY }}
         QUARTUS_IMAGE: ${{ steps.image.outputs.image }}
-        FORCED: ${{ github.event.client_payload.forced }}
-        # [MiSTer-DB9-Pro BEGIN] - key gate v1.5: MASTER_ROOT for SipHash MAC
-        # push_release.sh materialises sys/db9_key_secret.vh from this env var
-        # before Quartus compile. 64 hex chars = 32 bytes. KEEP THIS SECRET.
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        FORCED: ${{ github.event.inputs.forced }}
+        # [MiSTer-DB9-Pro BEGIN] - 64 hex chars = 32 bytes. KEEP SECRET.
         MASTER_ROOT_HEX: ${{ secrets.MASTER_ROOT_HEX }}
         # [MiSTer-DB9-Pro END]
+# [MiSTer-DB9 END]
