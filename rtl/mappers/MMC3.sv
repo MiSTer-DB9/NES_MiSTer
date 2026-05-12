@@ -74,10 +74,10 @@ reg [1:0] cycle_counter;
 wire mapper158 = (flags[7:0] == 158);
 
 // This code detects rising edges on a12.
-reg old_a12_edge;
+reg old_a12_edge, a12_edge_delayed;
 reg [4:0] a12_ctr;
 wire a12_edge = (chr_ain_o[12] && a12_ctr == 0) || old_a12_edge;
-reg reload_extra = 0;
+
 always @(posedge clk) begin
 	if (SaveStateBus_load) begin
 		old_a12_edge       <= SS_MAP1[   33];
@@ -100,7 +100,6 @@ if (~enable) begin
 	prg_rom_bank_mode <= 0;
 	chr_K <= 0;
 	chr_a12_invert <= 0;
-	reload_extra <= 0;
 	mirroring <= 0;
 	{irq_enable, irq_reload} <= 0;
 	{irq_latch, counter} <= 0;
@@ -113,12 +112,13 @@ if (~enable) begin
 	cycle_counter <= 0;
 	irq <= 0;
 	irq_delay <= 0;
+	a12_edge_delayed <= 0;
 end else if (SaveStateBus_load) begin
 	irq                <= SS_MAP1[    0];
 	cycle_counter      <= SS_MAP1[ 2: 1];
 	irq_cycle_mode     <= SS_MAP1[    3];
 	next_irq_cycle_mode<= SS_MAP1[    4];
-	reload_extra       <= SS_MAP1[    5];
+	a12_edge_delayed   <= SS_MAP1[    5];
 	bank_select        <= SS_MAP1[ 9: 6];
 	prg_rom_bank_mode  <= SS_MAP1[   10];
 	chr_a12_invert     <= SS_MAP1[   11];
@@ -146,20 +146,33 @@ end else if (ce) begin
 	// Process these before writes so irq_reload and cycle_counter register writes take precedence.
 	cycle_counter <= cycle_counter + 1'd1;
 	irq_cycle_mode <= next_irq_cycle_mode;
+	a12_edge_delayed <= a12_edge;
 
-	if (irq_cycle_mode ? (cycle_counter == 3) : a12_edge) begin
-		if (counter == 8'h00) begin
-			counter <= irq_latch + ((irq_reload && reload_extra) ? 1'd1 : 1'd0);
-			if (~|({irq_latch, ((irq_reload && reload_extra) ? 1'd1 : 1'd0)}) && irq_reload && irq_enable) begin
+	if (irq_cycle_mode ? (cycle_counter == 3) : a12_edge_delayed) begin
+		if (irq_reload) begin
+		    if (|irq_latch) begin
+				// Wiki and Nintendulator source: OR with 1 if not zero
+				counter <= irq_latch | 8'h01;
+			end else begin
+				counter <= 8'h00;
+			end
+			if (~|irq_latch && irq_enable) begin
 				irq_delay <= 1;
 			end
-		end else begin
+			irq_reload <= 0;
+		end
+		else if (counter == 8'h00) begin
+			counter <= irq_latch;
+			if (~|irq_latch && irq_enable) begin
+				irq_delay <= 1;
+			end
+		end
+		else begin
 			counter <= counter - 1'd1;
 			if (counter == 8'h01 && irq_enable) begin
 				irq_delay <= 1;
 			end
 		end
-		irq_reload <= 0;
 	end
 
 	if (irq_delay) begin
@@ -190,10 +203,8 @@ end else if (ce) begin
 			3'b01_1: begin end
 			3'b10_0: irq_latch <= prg_din;                      // IRQ latch ($C000-$DFFE, even)
 			3'b10_1: begin
-						reload_extra <= |a12_ctr ? 1'd0 : 1'd1;
 						{irq_reload, next_irq_cycle_mode} <= {1'b1, prg_din[0]}; // IRQ reload ($C001-$DFFF, odd)
 						cycle_counter <= 0;
-						counter <= 0;
 					end
 			3'b11_0: {irq_enable, irq} <= 2'b00;                 // IRQ disable ($E000-$FFFE, even)
 			3'b11_1: {irq_enable, irq} <= 2'b10;                 // IRQ enable ($E001-$FFFF, odd)
@@ -205,7 +216,7 @@ assign SS_MAP1_BACK[    0] = irq;
 assign SS_MAP1_BACK[ 2: 1] = cycle_counter;
 assign SS_MAP1_BACK[    3] = irq_cycle_mode;
 assign SS_MAP1_BACK[    4] = next_irq_cycle_mode;
-assign SS_MAP1_BACK[    5] = reload_extra;
+assign SS_MAP1_BACK[    5] = a12_edge_delayed;
 assign SS_MAP1_BACK[ 9: 6] = bank_select;
 assign SS_MAP1_BACK[   10] = prg_rom_bank_mode;
 assign SS_MAP1_BACK[   11] = chr_a12_invert;
@@ -287,6 +298,8 @@ assign SaveStateBus_Dout = enable ? SaveStateBus_Dout_active : 64'h0000000000000
 endmodule
 
 // This mapper also handles mapper 33,47,48,74,76,80,82,88,95,118,119,154,191,192,194,195,206 and 207.
+// The line commented with Warning 10027 throws a synthesis warning that is suppressed
+// altera message_off 10027
 module MMC3 (
 	input        clk,         // System clock
 	input        ce,          // M2 ~cpu_clk
@@ -359,6 +372,11 @@ wire prg_is_ram;
 reg [6:0] irq_reg;
 assign irq = mapper48 ? irq_reg[3] & irq_enable : irq_reg[0];
 reg [7:0] m268_reg [5:0];
+reg [7:0] m45_reg [3:0];  // Mapper 45 outer bank registers
+reg [2:0] m45_index;      // Mapper 45 register index (0-3, wraps)
+wire m45_locked = m45_reg[3][6]; // Mapper 45 lock bit (D6, per Nintendulator)
+reg [7:0] m52_reg;        // Mapper 52 outer bank register
+wire m52_locked = m52_reg[7]; // Mapper 52 lock bit (D7)
 
 // The alternative behavior has slightly different IRQ counter semantics.
 wire mmc3_alt_behavior = acclaim;
@@ -391,7 +409,9 @@ wire MMC6 = ((flags[7:0] == 4) && (flags[24:21] == 1)); // mapper 4, submapper 1
 wire acclaim = ((flags[7:0] == 4) && (flags[24:21] == 3)); // Acclaim mapper
 wire mapper268 = ({flags[20:17],flags[7:0]} == 268); // Coolboy/Mindkids; Note: if mapper 268-256=12 was in this driver, it would need to check upper mapper bits
 wire mapper268_5k = (flags[24:21] == 1);
-wire oversized = mapper268 || (flags[10:9] == 3); // If prg size in header is >= 1MB (prg_size==6 or 7) must be some way to access it. Allow oversize mmc3
+wire mapper45 = (flags[7:0] == 45);    // Super 1000000-in-1 multicart
+wire mapper52 = (flags[7:0] == 52);    // Mario Party 7-in-1 multicart
+wire oversized = mapper268 || mapper45 || mapper52 || (flags[10:9] == 3); // If prg size in header is >= 1MB (prg_size==6 or 7) must be some way to access it. Allow oversize mmc3
 wire gnrom;
 wire lockout;
 wire gnrom_lock;
@@ -434,6 +454,9 @@ if (~enable) begin
 	mapper37_multicart <= 3'b000;
 	mapper189_prgsel <= 4'b1011; // mapper 208 requires 0xX011
 	{m268_reg[0],m268_reg[1],m268_reg[2],m268_reg[3],m268_reg[4],m268_reg[5]} <= 0;
+	{m45_reg[0],m45_reg[1],m45_reg[2],m45_reg[3]} <= {8'h00, 8'h00, 8'h0F, 8'h00}; // reg[2]=0x0F per NRS
+	m45_index <= 0;
+	m52_reg <= 0;
 end else if (SaveStateBus_load) begin
 	irq_reg            <= SS_MAP1[ 6: 0];
 	bank_select        <= SS_MAP1[ 9: 7];
@@ -606,6 +629,19 @@ end else begin
 		// $5800-5FFF: Prot index
 		if (prg_write && prg_ain[15:11] == 5'b01011 && mapper208)
 			m268_reg[{1'b0,prg_ain[1:0]}] <= prg_din ^ {1'b0,prot[3],1'b0,prot[2:1],2'b00,prot[0]};
+
+		// Mapper 45: All writes to $6000-$7FFF update outer bank registers sequentially
+		// Per Nintendulator: no even/odd distinction, just write to next register
+		if (prg_write && prg_ain[15:13] == 3'b011 && mapper45 && !m45_locked) begin
+			m45_reg[m45_index[1:0]] <= prg_din;
+			m45_index <= m45_index + 1'd1;
+		end
+
+		// Mapper 52: Write to $6000-$7FFF sets outer bank register (once until reset)
+		// D[7]=lock, D[6]=CHR mode, D[5:4]=CHR bank, D[3]=PRG mode, D[2:0]=PRG bank
+		if (prg_write && prg_ain[15:13] == 3'b011 && mapper52 && !m52_locked) begin
+			m52_reg <= prg_din;
+		end
 	end
 
 	if (m2_inv) begin // Inverted M2
@@ -751,7 +787,7 @@ end
 always @* begin
 	prg_bus_write = 1'b1;
 	if (!prg_write && mapper208 && prg_ain[15:11] == 5'b01011) begin // 5800
-		prg_dout = m268_reg[{1'b0,prg_ain[1:0]}];
+		prg_dout = m268_reg[{1'b0,prg_ain[1:0]}]; // Warning 10027 suppressed: index is correctly constrained to 0-3
 	end else begin
 		prg_dout = 8'hFF; // By default open bus.
 		prg_bus_write = 0;
@@ -781,7 +817,32 @@ assign map268c[10] = (weird_mode && chr_ain[10]) ? 1'b0 : (use_chr_ain_12 || !we
 
 wire m268_chr_ram = {map268c[17:11],1'b1} == m268_reg[4];
 
-wire [21:0] prg_aout_tmp = {1'b0, mapper268 ? map268p[20:13] : prgsel, prg_ain[12:0]};
+// Mapper 45 outer bank address calculation
+// CHR: (chrsel & CHR_AND) | CHR_OR, plus high bits from reg[2]
+wire [5:0] m45_prg_and = ~m45_reg[3][5:0];  // PRG-AND mask (inverted in register)
+wire [7:0] m45_chr_and = 8'hFF >> (4'hF - m45_reg[2][3:0]); // CHR-AND mask
+wire [7:0] m45_chr_or = m45_reg[0]; // CHR A10-A17
+
+// PRG final: upper bits from reg1[7:6], lower bits masked/OR'd
+wire [7:0] m45_prg_final = {m45_reg[1][7:6], (prgsel[5:0] & m45_prg_and) | m45_reg[1][5:0]};
+// CHR final: (chrsel & AND) | OR
+wire [7:0] m45_chr_final = (chrsel[7:0] & m45_chr_and) | m45_chr_or;
+
+// Mapper 52 outer bank address calculation (per Nintendulator)
+// PRG: bit3=0: 256KB outer (5-bit mask), bit3=1: 128KB outer (4-bit mask)
+// CHR: bit6=0: 256KB outer (8-bit mask), bit6=1: 128KB outer (7-bit mask)
+// PRGbank << 4: bits go to positions [6:4], CHRbank << 7: bits go to positions [9:7]
+wire [4:0] m52_prg_and = m52_reg[3] ? 5'b01111 : 5'b11111;
+// PRG OR: bit3=1: {bits 2:0} << 4 = positions 6:4; bit3=0: {bits 2:1, 0} << 4 = positions 6:5
+wire [7:0] m52_prg_or = m52_reg[3] ? {1'b0, m52_reg[2:0], 4'b0000} : {1'b0, m52_reg[2:1], 5'b00000};
+wire [7:0] m52_chr_and = m52_reg[6] ? 8'b01111111 : 8'b11111111;
+// CHR OR: {bit5, bit2, [bit4]} << 7 = positions 9:7 (bit4 only when bit6=1)
+wire [9:0] m52_chr_or = m52_reg[6] ? {m52_reg[5], m52_reg[2], m52_reg[4], 7'b0000000} : {m52_reg[5], m52_reg[2], 8'b00000000};
+
+wire [7:0] m52_prg_final = (prgsel[4:0] & m52_prg_and) | m52_prg_or;
+wire [9:0] m52_chr_final = (chrsel[7:0] & m52_chr_and) | m52_chr_or;
+
+wire [21:0] prg_aout_tmp = {1'b0, mapper268 ? map268p[20:13] : mapper45 ? m45_prg_final : mapper52 ? m52_prg_final : prgsel, prg_ain[12:0]};
 
 wire ram_enable_a = !MMC6 ? (ram_enable[prg_ain[12:11]])
 						:   (ram6_enabled && ram6_enable && prg_ain[12] == 1'b1 && prg_ain[9] == 1'b0)
@@ -811,6 +872,9 @@ assign chr_aout =
 		(mapper195 & chr_ram_cs)             ? {10'b11_1111_1111,  chrsel[1:0], chr_ain[9:0]} :   // 4kb CHR-RAM
 		(m268_chr_ram)                       ? {11'b11_1111_1111_1,            chr_ain[10:0]} :   // 2kb CHR-RAM
 		(mapper268)                          ? {4'b10_00,              map268c, chr_ain[9:0]} :   // Mapper 268 override
+		(mapper45 & flags[15])               ? {9'b11_1111_111, chr_ain[12:0]} : // Mapper 45 unbanked 8KB CHR-RAM
+		(mapper45)                           ? {2'b10, m45_reg[2][5:4], m45_chr_final, chr_ain[9:0]} : // Mapper 45 CHR-ROM
+		(mapper52)                           ? {2'b10,         m52_chr_final, chr_ain[9:0]} : // Mapper 52 CHR override
 		                                       {3'b10_0,                chrsel, chr_ain[9:0]};    // Standard MMC3 CHR-ROM/RAM
 
 wire ram_a13 = mapper268 && m268_reg[3][5] && (prg_ain[15:12] == 4'h5);
@@ -840,7 +904,7 @@ eReg_SavestateV #(SSREG_INDEX_MAP3, 64'h0000000000000000) iREG_SAVESTATE_MAP3 (c
 assign SaveStateBus_Dout = enable ? SaveStateBus_Dout_active : 64'h0000000000000000;
 
 endmodule
-
+// altera message_on 10027
 
 // mapper 165
 module Mapper165(
