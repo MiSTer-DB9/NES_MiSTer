@@ -289,8 +289,8 @@ video_freak video_freak
 reg [1:0] video_status;
 reg new_vmode = 0;
 always @(posedge clk) begin
-    if (video_status != status[24:23]) begin
-        video_status <= status[24:23];
+	if (video_status != effective_sys_type) begin
+		video_status <= effective_sys_type;
         new_vmode <= ~new_vmode;
     end
 end
@@ -307,7 +307,7 @@ parameter CONF_STR = {
 	"FS,NESFDSNSF;",
 	"H1F2,BIN,Load FDS BIOS;",
 	"-;",
-	"ONO,System Type,NTSC,PAL,Dendy;",
+	"ONO,System Type,Auto,NTSC,PAL,Dendy;",
 	"-;",
 	"C,Cheats;",
 	"H2OK,Cheats Enabled,On,Off;",
@@ -384,7 +384,8 @@ parameter CONF_STR = {
 	"Save to state 3,",
 	"Restore state 3,",
 	"Save to state 4,",
-	"Restore state 4;",
+	"Restore state 4,",
+	"No NES 2.0 header found\nDefaulting to NTSC;",
 	"V,v",`BUILD_DATE
 };
 
@@ -396,7 +397,6 @@ wire [1:0] buttons;
 wire [127:0] status;
 
 wire arm_reset = status[0];
-wire pal_video = |status[24:23];
 wire [1:0] hide_overscan = status[68:67];
 wire [3:0] palette2_osd = status[49:47];
 wire joy_swap = status[9] ^ (raw_serial || piano); // Controller on port 2 for Miracle Piano/SNAC
@@ -404,6 +404,14 @@ wire fds_auto_eject = ~status[16];
 wire fds_fast = ~status[17];
 wire ext_audio = ~status[30];
 wire int_audio = ~status[31];
+
+// Auto detect console region
+wire [1:0] auto_sys_type = (mapper_flags[37:36] == 2'd1) ? 2'd1 :  // PAL
+                           (mapper_flags[37:36] == 2'd3) ? 2'd2 :  // Dendy
+                           2'd0;                                    // NTSC (0 and multi-region)
+wire [1:0] effective_sys_type = (status[24:23] == 2'd0) ? auto_sys_type
+                                                         : (status[24:23] - 2'd1);
+wire pal_video = |effective_sys_type;
 
 // Figure out file types
 reg type_bios, type_fds, type_gg, type_nsf, type_nes, type_palette, is_bios, downloading;
@@ -559,8 +567,8 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 assign joyA = joyA_unmod[23] ? 23'b0 : joyA_unmod;
 
-wire       info_req = diskside_info || ss_info_req;
-wire [7:0] info     = ss_info_req ? ss_info : {1'b0,diskside} + 3'd1;
+wire       info_req = diskside_info || ss_info_req || auto_info_req;
+wire [7:0] info     = ss_info_req ? ss_info : auto_info_req ? 8'd18 : {1'b0,diskside} + 3'd1;
 
 wire clock_locked;
 wire clk85;
@@ -603,7 +611,7 @@ always @(posedge CLK_50M) begin : cfg_block
 	reg pald = 0, pald2 = 0;
 	reg [2:0] state = 0;
 
-	pald  <= status[23];
+	pald  <= (effective_sys_type == 2'd1);
 	pald2 <= pald;
 
 	cfg_write <= 0;
@@ -917,7 +925,14 @@ GameLoader loader
 	.rom_loaded       ( rom_loaded        )
 );
 
-always @(posedge clk) if (loader_done) mapper_flags <= loader_flags;
+reg auto_info_req;
+
+always @(posedge clk) begin
+	if (loader_done) mapper_flags <= loader_flags;
+	auto_info_req <= 0;
+	if (loader_done && rom_loaded && type_nes && !loader_flags[35] && status[24:23] == 2'd0)
+		auto_info_req <= 1;
+end
 
 reg led_blink;
 always @(posedge clk) begin : blink_block
@@ -938,10 +953,10 @@ wire reset_nes =
 	bk_loading     ||
 	bk_loading_req ||
 	hold_reset     ||
-	(old_sys_type != status[24:23]);
+	(old_sys_type != effective_sys_type);
 
 reg [1:0] old_sys_type;
-always @(posedge clk) old_sys_type <= status[24:23];
+always @(posedge clk) old_sys_type <= effective_sys_type;
 
 wire [17:0] bram_addr;
 wire [7:0] bram_din;
@@ -991,7 +1006,7 @@ NES nes (
 	.pausecore       (pausecore),
 	.corepaused      (corepaused),
 	.debug_dots	     (status[69]),
-	.sys_type        (status[24:23]),
+	.sys_type        (effective_sys_type),
 	.nes_div         (nes_ce),
 	.mapper_flags    (downloading ? 64'd0 : mapper_flags),
 	.gg              (status[20]),
@@ -1051,8 +1066,7 @@ NES nes (
 	.bram_write      (bram_write),
 	.bram_override   (bram_en),
 	.save_written    (save_written),
-
-
+	.mapper_has_flashsaves (mapper_has_flashsaves),
 
 	// savestates
 	.mapper_has_savestate    (mapper_has_savestate),
@@ -1147,7 +1161,9 @@ always @(posedge clk) begin
 	end
 end
 
-wire [24:0] ch2_addr = sleep_savestate ? Savestate_SDRAMAddr      : {7'b0001111, save_addr};
+wire [24:0] ch2_addr = sleep_savestate ? Savestate_SDRAMAddr :
+                       mapper_has_flashsaves ? {6'b000000, save_addr} : // PRG-ROM
+                       {7'b0001111, save_addr[17:0]};                   // CARTRAM
 wire        ch2_wr   = sleep_savestate ? Savestate_SDRAMWrEn      : save_wr;
 wire  [7:0] ch2_din  = sleep_savestate ? Savestate_SDRAMWriteData : sd_buff_dout;
 wire        ch2_rd   = sleep_savestate ? Savestate_SDRAMRdEn      : save_rd;
@@ -1213,7 +1229,7 @@ dpram #(" ", 11) eeprom
 wire save_busy;
 reg save_rd, save_wr;
 reg save_wait;
-reg [17:0] save_addr;
+reg [18:0] save_addr;
 
 always @(posedge clk) begin
 
@@ -1224,14 +1240,14 @@ always @(posedge clk) begin
 		save_wait <= 0;
 	end
 	else if(sd_ack & ~save_busy ) begin
-		if(~bk_loading && (save_addr != {sd_lba[8:0], sd_buff_addr})) begin
+		if(~bk_loading && (save_addr != {sd_lba[9:0], sd_buff_addr})) begin
 			save_rd <= 1;
-			save_addr <= {sd_lba[8:0], sd_buff_addr};
+			save_addr <= {sd_lba[9:0], sd_buff_addr};
 			save_wait <= 1;
 		end
 		if(bk_loading && sd_buff_wr) begin
 			save_wr <= 1;
-			save_addr <= {sd_lba[8:0], sd_buff_addr};
+			save_addr <= {sd_lba[9:0], sd_buff_addr};
 			save_wait <= 1;
 		end
 	end
@@ -1239,9 +1255,9 @@ always @(posedge clk) begin
 end
 
 reg bk_pending;
-wire save_written;
+wire save_written, mapper_has_flashsaves;
 always @(posedge clk) begin
-	if ((mapper_flags[25] || fds) && ~OSD_STATUS && save_written)
+	if ((mapper_flags[25] || fds || mapper_has_flashsaves) && ~OSD_STATUS && save_written)
 		bk_pending <= 1'b1;
 	else if (bk_state)
 		bk_pending <= 1'b0;
@@ -1302,7 +1318,7 @@ video video
 	.clk(clk),
 	.reset(reset_nes),
 	.cnt(nes_ce_video),
-	.sys_type(status[24:23]),
+	.sys_type(effective_sys_type),
 	.nes_hsync(nes_hsync),
 	.nes_hblank(nes_hblank),
 	.nes_vsync(nes_vsync),
@@ -1390,7 +1406,10 @@ reg  bk_request = 0;
 wire bk_busy = (bk_state == S_COPY);
 reg  fds_busy;
 
-wire [8:0] save_sz = fds ? rom_sz[17:9] : bram_en ? 9'd3 : (prg_nvram == 4'd7) ? 9'd15 : 9'd63;
+wire [10:0] save_sz = fds ? rom_sz[17:9] :
+                      bram_en ? 11'd3 :
+                      mapper_has_flashsaves ? (11'd32 << mapper_flags[10:8]) : // 512KB max atm
+                      (prg_nvram == 4'd7) ? 11'd15 : 11'd63;
 
 typedef enum bit [1:0] { S_IDLE, S_COPY } mystate;
 mystate bk_state = S_IDLE;
@@ -1429,7 +1448,7 @@ always @(posedge clk) begin : save_block
 		end
 	end else begin
 		if(old_ack & ~sd_ack) begin
-			if(sd_lba[8:0] == save_sz) begin
+			if(sd_lba == save_sz) begin
 				bk_loading <= 0;
 				bk_state <= S_IDLE;
 			end else begin
@@ -1630,7 +1649,8 @@ wire [3:0] prg_nvram = (is_nes20 ? ines[10][7:4] : 4'h0);
 wire       piano = is_nes20 && (ines[15][5:0] == 6'h19);
 wire has_saves = ines[6][1];
 
-assign mapper_flags[63:36] = 'd0;
+assign mapper_flags[63:38] = 'd0;
+assign mapper_flags[37:36] = is_nes20 ? ines[12][1:0] : 2'b00;
 assign mapper_flags[35]    = is_nes20;
 assign mapper_flags[34:31] = prg_nvram; //NES 2.0 Save RAM shift size (64 << size)
 assign mapper_flags[30]    = piano;
