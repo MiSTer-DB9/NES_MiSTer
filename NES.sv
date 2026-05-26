@@ -521,7 +521,9 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
 
 	.status(status),
 	.status_menumask({raw_db9,(rom_loaded && mapper_has_savestate), en216p, ~status[50], ~raw_serial, (palette2_osd != 3'd5), ~gg_avail, bios_loaded, ~bk_ena}),
-	.status_in({status[63:47],ss_slot,status[44:0]}),
+	// [MiSTer-DB9 BEGIN] - widened to 128 bits, preserve [127:64] (joy_type at [127:125], joy_2p at [124])
+	.status_in({status[127:47],ss_slot,status[44:0]}),
+	// [MiSTer-DB9 END]
 	.status_set(statusUpdate),
 	.info_req(info_req),
 	.info(info),
