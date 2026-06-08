@@ -781,12 +781,15 @@ always_comb begin
 		joypad2_data = joypad_bits2[0];
 	// [MiSTer-DB9-Pro END]
 	end else begin
-		USER_OUT[0]  = 1'b1;
-		USER_OUT[1]  = 1'b1;
-		USER_OUT[2]  = 1'b1;
-		USER_OUT[3]  = 1'b1;
-		USER_OUT[4]  = 1'b1;
-		USER_OUT[6]  = 1'b1;
+		// Off/USB: fall through to USER_OUT_DRIVE so the joydb OSD-open probe FSM
+		// drives USER_IO for autodetect when the UserIO Joystick selector is Off
+		// (USER_OUT_DRIVE is idle-high while the probe is inactive -> USB/idle no-op).
+		USER_OUT[0]  = USER_OUT_DRIVE[0];
+		USER_OUT[1]  = USER_OUT_DRIVE[1];
+		USER_OUT[2]  = USER_OUT_DRIVE[2];
+		USER_OUT[3]  = USER_OUT_DRIVE[3];
+		USER_OUT[4]  = USER_OUT_DRIVE[4];
+		USER_OUT[6]  = USER_OUT_DRIVE[6];
 		joypad1_data = {2'b0, mic, paddle_en & paddle_btn, joypad_bits[0]};
 		joypad2_data = joypad_bits2[0];
 
