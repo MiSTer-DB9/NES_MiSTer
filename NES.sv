@@ -238,27 +238,14 @@ joydb joydb (
 // USER_OUT[5] / USER_OUT[7] driven by separate strap assigns (SNAC8 idle).
 // [MiSTer-DB9 END]
 
-wire [31:0] joyA_unmod = joydb_1ena ?
-	!status[60] ? {
-		//SM BC UDLR
-		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11],joydb_1[5],joydb_1[6],joydb_1[3:0]}
-		} :
-		{ 
-		//SM CB UDLR
-		OSD_STATUS? 32'b000000 : {joydb_1[10],joydb_1[11],joydb_1[6],joydb_1[5],joydb_1[3:0]}
-	}
-: joyA_USB;
-
-wire [31:0] joyB = joydb_2ena ?
-	!status[60] ? {
-		//SM BC UDLR
-		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11],joydb_2[5],joydb_2[6],joydb_2[3:0]}
-		} :
-		{ 
-		//SM CB UDLR
-		OSD_STATUS? 32'b000000 : {joydb_2[10],joydb_2[11],joydb_2[6],joydb_2[5],joydb_2[3:0]}
-}
-: joydb_1ena ? joyA_USB : joyB_USB;
+// [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: programmable remap matrix
+// joydb_*_mapped carry the DB9/DB15/Saturn buttons rewired into MiSTer-standard
+// order per the user's per-core/per-devtype map (UIO 0xFD). The CONF_STR-derived
+// default (gamepad_defaults) replaces the old status[60] "Buttons Config." A/B
+// swap; button layout is now redefinable in the OSD "Define DB9 buttons" flow.
+wire [31:0] joyA_unmod = joydb_1ena ? (OSD_STATUS? 32'b000000 : joydb_1_mapped[7:0]) : joyA_USB;
+wire [31:0] joyB       = joydb_2ena ? (OSD_STATUS? 32'b000000 : joydb_2_mapped[7:0]) : joydb_1ena ? joyA_USB : joyB_USB;
+// [MiSTer-DB9 END]
 
 wire [31:0] joyC = joydb_2ena ? joyA_USB : joydb_1ena ? joyB_USB : joyC_USB;
 wire [31:0] joyD = joydb_2ena ? joyB_USB : joydb_1ena ? joyC_USB : joyD_USB;
@@ -365,7 +352,6 @@ parameter CONF_STR = {
 	"d4P2O[127:126],UserIO Joystick,Off,Saturn,DB9MD,DB15;",
 	"d4P2O[125],UserIO Players, 1 Player,2 Players;",
 	// [MiSTer-DB9-Pro END]
-	"d4P2oS,Buttons Config.,Option 1,Option 2;",
 	"P2O9,Swap Joysticks,No,Yes;",
 	"P2OA,Multitap,Disabled,Enabled;",
 	"P2oJK,SNAC,Off,Controllers,Zapper,3D Glasses;",
