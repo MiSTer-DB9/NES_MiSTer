@@ -3,6 +3,9 @@
 //
 // MiSTer port: Copyright (C) 2017,2018 Sorgelig
 
+// [MiSTer-DB9 BEGIN] - status bits owned by the fork: joy_type, joy_2p, SNAC Pinout
+// [MiSTer-DB9 RESERVED status bits: 127:126 125 122]
+// [MiSTer-DB9 END]
 module emu
 (
 	//Master input clock
@@ -166,11 +169,13 @@ module emu
 
 
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_PP default (port_batch replaces with USER_PP_DRIVE)
-// SNAC drives Strobe (IO0), P1 Clk (IO1) and P2 Clk (IO6) push-pull: the weak pull-up alone
-// cannot latch the pad on adapters without their own pull-ups. D4 (IO4) is driven high
-// push-pull too in Controllers mode, as the old DB9MD UserIO mode did; some adapters need
-// that to keep the pad alive. Zapper and 3D glasses modes read D4, so it stays open-drain.
-assign USER_PP = USER_PP_DRIVE | (raw_serial ? {1'b0, 1'b1, 1'b0, status[52:51] == 2'b01, 2'b00, 2'b11} : 8'b00000000);
+// SNAC drives Strobe (IO0), P1 Clk (IO1) and, with SNAC Pinout DB9, P2 Clk (IO6) push-pull:
+// the weak pull-up alone cannot latch the pad on adapters without their own pull-ups. With
+// SNAC Pinout USB3 the P2 Clk moves to IO3 and stays open-drain, as upstream drives it.
+// D4 (IO4) is driven high push-pull too in Controllers mode, as the old DB9MD UserIO mode
+// did; some adapters need that to keep the pad alive. Zapper and 3D glasses modes read D4,
+// so it stays open-drain.
+assign USER_PP = USER_PP_DRIVE | (raw_serial ? {1'b0, ~snac_usb3, 1'b0, status[52:51] == 2'b01, 2'b00, 2'b11} : 8'b00000000);
 // [MiSTer-DB9 END]
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper
 wire         CLK_JOY = CLK_50M;                 // Assign clock between 40-50Mhz
@@ -368,6 +373,9 @@ parameter CONF_STR = {
 	"P2O9,Swap Joysticks,No,Yes;",
 	"P2OA,Multitap,Disabled,Enabled;",
 	"P2oJK,SNAC,Off,Controllers,Zapper,3D Glasses;",
+	// [MiSTer-DB9 BEGIN] - SNAC P2 pin layout: DB9 adapters vs upstream USB3 adapters
+	"H4P2O[122],SNAC Pinout,DB9,USB3;",
+	// [MiSTer-DB9 END]
 	"P2o02,Peripheral,None,Zapper(Mouse),Zapper(Joy1),Zapper(Joy2),Vaus,Vaus(A-Trigger),Powerpad,Family Trainer;",
 	"P2oL,Famicom Keyboard,No,Yes;",
 	"P2-;",
@@ -731,6 +739,12 @@ wire fds_btn = joyA[8] | joyB[8];
 reg [1:0] nes_ce;
 
 wire raw_serial = |status[52:51];
+// [MiSTer-DB9 BEGIN] - SNAC Pinout: DB9 adapters put P2 data on IO3 and P2 clock on IO6,
+// upstream USB3 adapters swap them (P2 clock IO3, P2 data IO6).
+wire snac_usb3  = status[122];
+reg  snac_usb3_d = 0;
+wire snac_p2_in = snac_usb3 ? USER_IN[6] : USER_IN[3];
+// [MiSTer-DB9 END]
 
 // Extend SNAC zapper high signal to be closer to original NES
 wire extend_serial_d4 = status[52:51] == 2'b10;
@@ -745,8 +759,12 @@ wire vs_zapper_en;
 always @(posedge clk) begin
 	reg [17:0] clk_cnt;
 
-	if (raw_serial) begin
-		if (~USER_IN[3])
+	// [MiSTer-DB9 BEGIN] - restart P2 detect on a SNAC Pinout change, P2 detect
+	// reads the P2 data pin picked by SNAC Pinout
+	snac_usb3_d <= snac_usb3;
+	if (raw_serial && snac_usb3 == snac_usb3_d) begin
+		if (~snac_p2_in)
+	// [MiSTer-DB9 END]
 			snac_p2 <= 1;
 		end else begin
 			snac_p2 <= 0;
@@ -777,8 +795,14 @@ assign USER_OUT[7] = 1'b1;
 
 reg [4:0] joypad1_data, joypad2_data;
 
-wire joy0_d0 = snac_p2 ? ~USER_IN[3] : joypad_bits[0];
-wire joy1_d0 = snac_p2 ? ~USER_IN[3] : joypad_bits2[0];
+// [MiSTer-DB9 BEGIN] - SNAC Pinout: P2 clock, routed to IO6 (DB9) or IO3 (USB3) below
+wire snac_p2_clk = ~joy_swap ? ~joypad_clock[0] : ~joypad_clock[1];
+// [MiSTer-DB9 END]
+
+// [MiSTer-DB9 BEGIN] - P2 data read from the pin picked by SNAC Pinout
+wire joy0_d0 = snac_p2 ? ~snac_p2_in : joypad_bits[0];
+wire joy1_d0 = snac_p2 ? ~snac_p2_in : joypad_bits2[0];
+// [MiSTer-DB9 END]
 
 // [MiSTer-DB9 BEGIN] - SerJoystick relay falls through to joydb USER_OUT_DRIVE
 always_comb begin
@@ -786,9 +810,9 @@ always_comb begin
 		USER_OUT[0]  = joypad_out[0];
 		USER_OUT[1]  = ~joy_swap ? ~joypad_clock[1] : ~joypad_clock[0];
 		USER_OUT[2]  = snac_3d_glasses ? joypad_out[1] : 1'b1;
-		USER_OUT[6]  = ~joy_swap ? ~joypad_clock[0] : ~joypad_clock[1];
+		USER_OUT[6]  = snac_usb3 ? 1'b1 : snac_p2_clk;
 		USER_OUT[4]  = 1'b1;
-		USER_OUT[3]  = 1'b1;
+		USER_OUT[3]  = snac_usb3 ? snac_p2_clk : 1'b1;
 		joypad1_data = {2'b0, mic, 1'b0, ~joy_swap ? joy0_d0 : ~USER_IN[5]};
 		joypad2_data = {serial_d4, snac_3d_glasses ? 1'b1 : ~USER_IN[2], 2'b00, ~joy_swap ? ~USER_IN[5] : joy1_d0};
 
