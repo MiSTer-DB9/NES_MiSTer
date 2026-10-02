@@ -167,8 +167,10 @@ module emu
 
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: USER_PP default (port_batch replaces with USER_PP_DRIVE)
 // SNAC drives Strobe (IO0), P1 Clk (IO1) and P2 Clk (IO6) push-pull: the weak pull-up alone
-// cannot latch the pad on adapters without their own pull-ups.
-assign USER_PP = USER_PP_DRIVE | (raw_serial ? 8'b01000011 : 8'b00000000);
+// cannot latch the pad on adapters without their own pull-ups. D4 (IO4) is driven high
+// push-pull too in Controllers mode, as the old DB9MD UserIO mode did; some adapters need
+// that to keep the pad alive. Zapper and 3D glasses modes read D4, so it stays open-drain.
+assign USER_PP = USER_PP_DRIVE | (raw_serial ? {1'b0, 1'b1, 1'b0, status[52:51] == 2'b01, 2'b00, 2'b11} : 8'b00000000);
 // [MiSTer-DB9 END]
 // [MiSTer-DB9 BEGIN] - DB9/SNAC8 support: joydb wrapper
 wire         CLK_JOY = CLK_50M;                 // Assign clock between 40-50Mhz
