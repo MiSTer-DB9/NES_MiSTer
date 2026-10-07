@@ -261,8 +261,8 @@ joydb joydb (
 // order per the user's per-core/per-devtype map (UIO 0xFD). The CONF_STR-derived
 // default (gamepad_defaults) replaces the old status[60] "Buttons Config." A/B
 // swap; button layout is now redefinable in the OSD "Define DB9 buttons" flow.
-wire [31:0] joyA_unmod = joydb_1ena ? (OSD_STATUS? 32'b000000 : joydb_1_mapped[7:0]) : joyA_USB;
-wire [31:0] joyB       = joydb_2ena ? (OSD_STATUS? 32'b000000 : joydb_2_mapped[7:0]) : joydb_1ena ? joyA_USB : joyB_USB;
+wire [31:0] joyA_unmod = joydb_1ena ? (OSD_STATUS? 32'b000000 : joydb_1_mapped[12:0]) : joyA_USB;
+wire [31:0] joyB       = joydb_2ena ? (OSD_STATUS? 32'b000000 : joydb_2_mapped[12:0]) : joydb_1ena ? joyA_USB : joyB_USB;
 // [MiSTer-DB9 END]
 
 wire [31:0] joyC = joydb_2ena ? joyA_USB : joydb_1ena ? joyB_USB : joyC_USB;
